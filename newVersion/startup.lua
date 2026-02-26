@@ -1043,6 +1043,8 @@ function flight_control:run(phy)
             self:airShip()
         elseif modelist[properties.mode].name == "Hms_Fly" then
             self:hms_fly()
+        elseif modelist[properties.mode].name == "Fixed-wing" then
+            self:fixedWing()
         elseif modelist[properties.mode].name == "PathFollow"
         or modelist[properties.mode].name == "ShipCamera"
         or modelist[properties.mode].name == "ShipFollow" then
@@ -1303,6 +1305,88 @@ end
 
 local cameraQuat = quat.new()
 local xOffset = 0
+function flight_control:fixedWing()
+    local ct, profile = self:getCtAndProfile()
+
+    -- 参数读取（若无配置则使用默认值）
+    local roll_P   = profile.fixedWing_roll_P   or 1.0
+    local roll_D   = profile.fixedWing_roll_D   or 2.0
+    local pitch_P  = profile.fixedWing_pitch_P  or 1.0
+    local pitch_D  = profile.fixedWing_pitch_D  or 2.0
+    local yaw_P    = profile.fixedWing_yaw_P    or 1.0
+    local yaw_D    = profile.fixedWing_yaw_D    or 2.0
+    local max_accel      = profile.fixedWing_max_accel      or 20   -- 最大加速度 (m/s²)
+    local slip_damping   = profile.fixedWing_slip_damping   or 2.0  -- 侧滑阻尼 (Z轴)
+    local alpha_damping  = profile.fixedWing_alpha_damping  or 2.0  -- 攻角阻尼 (Y轴)
+    local speed_P        = profile.fixedWing_speed_P        or 2.0  -- 速度控制比例增益
+    local speed_change_rate = profile.fixedWing_speed_change_rate or 5  -- 速度改变速率 (m/s²)
+
+    -- 初始化目标速度（如果不存在）
+    if not self.target_speed then
+        self.target_speed = 0
+    end
+
+    -- 旋转控制：右摇杆俯仰/滚转，左摇杆左右偏航
+    local desired_roll_rate  = 0
+    local desired_pitch_rate = 0
+    local desired_yaw_rate   = 0
+    if ct then
+        local max_roll_rate  = 180   -- 度/秒
+        local max_pitch_rate = 180
+        local max_yaw_rate   = 90
+        desired_roll_rate  = ct.RightStickRot.x * max_roll_rate
+        desired_pitch_rate = ct.RightStickRot.y * max_pitch_rate
+        desired_yaw_rate   = ct.LeftStick.x      * max_yaw_rate
+        
+        -- 左摇杆上下控制目标速度
+        local speed_input = ct.LeftStick.y
+        self.target_speed = self.target_speed + speed_input * speed_change_rate * 0.016  -- 假设16ms调用一次
+        -- 限制目标速度范围
+        self.target_speed = math.max(0, self.target_speed)  -- 最小速度为0
+    end
+
+    -- 转换为弧度/秒
+    desired_roll_rate  = math.rad(desired_roll_rate)
+    desired_pitch_rate = math.rad(desired_pitch_rate)
+    desired_yaw_rate   = math.rad(desired_yaw_rate)
+
+    -- 当前本地角速度
+    local current_roll  = self.omega.x
+    local current_yaw   = self.omega.y
+    local current_pitch = self.omega.z
+
+    -- 计算旋转力矩（PD控制）
+    local inertia = self.momentOfInertiaTensor
+    local torque_x = (desired_roll_rate  * roll_P - current_roll  * roll_D) * inertia[1][1]
+    local torque_y = (desired_yaw_rate   * yaw_P  - current_yaw   * yaw_D)  * inertia[2][2]
+    local torque_z = (desired_pitch_rate * pitch_P - current_pitch * pitch_D) * inertia[3][3]
+    applyRotDependentTorque(torque_x, torque_y, torque_z)
+
+    -- 速度控制：消除侧滑(Z)和攻角(Y)，保持纵向速度(X)稳定
+    local vx = self.velocityRot.x
+    local vy = self.velocityRot.y
+    local vz = self.velocityRot.z
+
+    -- 阻尼侧向速度（Z轴）
+    local force_z = -vz * self.mass * slip_damping
+    -- 阻尼垂直速度（Y轴）——消除攻角
+    local force_y = -vy * self.mass * alpha_damping
+
+    -- 速度保持控制（X轴）
+    local speed_error = self.target_speed - vx
+    local desired_accel_x = speed_error * speed_P
+    -- 限制加速度
+    desired_accel_x = math.max(-max_accel, math.min(max_accel, desired_accel_x))
+    local force_x = desired_accel_x * self.mass
+
+    local force_local = newVec(force_x, force_y, force_z)
+    applyRotDependentForce(force_local.x, force_local.y, force_local.z)
+
+    -- 自动抵消重力（始终生效）
+    local gravity_force_world = newVec(0, 10 * self.mass, 0)
+    local gravity_force_local = quat.vecRot(quat.nega(self.rot), gravity_force_world)
+    applyRotDependentForce(gravity_force_local.x, gravity_force_local.y, gravity_force_local.z)
+end
 function flight_control:shipCamera()
     local ct = controllers.activated
     local profile = properties.profile[properties.profileIndex]
@@ -4079,80 +4163,160 @@ function set_fixedWing:init()
         properties.other
     self.indexFlag = 4
     self.buttons = {
-        { text = "< wingOffset",   x = 1, y = 2, blitF = genStr(title, 12),             blitB = genStr(bg, 12) },
-        { text = "Wing:-   +",     x = 1, y = 3, blitF = genStr(font, 5) .. "fffff",    blitB = genStr(bg, 5) .. "b" .. "fff" .. "e" },
-        { text = "wSize:--    ++", x = 1, y = 4, blitF = genStr(font, 6) .. "ffffffff", blitB = genStr(bg, 6) .. "b5" .. "ffff" .. "1e" },
-        { text = "Tail:-   +",     x = 1, y = 5, blitF = genStr(font, 5) .. "fffff",    blitB = genStr(bg, 5) .. "b" .. "fff" .. "e" },
-        { text = "tSize:--    ++", x = 1, y = 6, blitF = genStr(font, 6) .. "ffffffff", blitB = genStr(bg, 6) .. "b5" .. "ffff" .. "1e" },
-        { text = "vertTail:-   +", x = 1, y = 7, blitF = genStr(font, 9) .. "fffff",    blitB = genStr(bg, 9) .. "b" .. "fff" .. "e" },
-        { text = "vSize:--    ++", x = 1, y = 8, blitF = genStr(font, 6) .. "ffffffff", blitB = genStr(bg, 6) .. "b5" .. "ffff" .. "1e" },
+        { text = "< wingOffset",   x = 1, y = 2, blitF = genStr(title, #"< wingOffset"),   blitB = genStr(bg, #"< wingOffset") },
+        { text = "Wing:-   +",     x = 1, y = 3, blitF = genStr(font, #"Wing:-   +"),     blitB = genStr(bg, #"Wing:-   +") },
+        { text = "wSize:--    ++", x = 1, y = 4, blitF = genStr(font, #"wSize:--    ++"), blitB = genStr(bg, #"wSize:--    ++") },
+        { text = "Tail:-   +",     x = 1, y = 5, blitF = genStr(font, #"Tail:-   +"),     blitB = genStr(bg, #"Tail:-   +") },
+        { text = "tSize:--    ++", x = 1, y = 6, blitF = genStr(font, #"tSize:--    ++"), blitB = genStr(bg, #"tSize:--    ++") },
+        { text = "vertTail:-   +", x = 1, y = 7, blitF = genStr(font, #"vertTail:-   +"), blitB = genStr(bg, #"vertTail:-   +") },
+        { text = "vSize:--    ++", x = 1, y = 8, blitF = genStr(font, #"vSize:--    ++"), blitB = genStr(bg, #"vSize:--    ++") },--这部分的设置不知道有什么用，但还是保留
+        { text = "Ctrl Params  ", x = 1, y = 10, blitF = genStr(title, #"Ctrl Params  "), blitB = genStr(bg, #"Ctrl Params  ") },
+        { text = "Roll P:-   +",   x = 2, y = 12, blitF = genStr(font, #"Roll P:-   +"),   blitB = genStr(bg, #"Roll P:-   +") },
+        { text = "Roll D:-   +",   x = 2, y = 13, blitF = genStr(font, #"Roll D:-   +"),   blitB = genStr(bg, #"Roll D:-   +") },
+        { text = "Pitch P:-  +",   x = 2, y = 14, blitF = genStr(font, #"Pitch P:-  +"),   blitB = genStr(bg, #"Pitch P:-  +") },
+        { text = "Pitch D:-  +",   x = 2, y = 15, blitF = genStr(font, #"Pitch D:-  +"),   blitB = genStr(bg, #"Pitch D:-  +") },
+        { text = "Yaw P:-    +",   x = 2, y = 16, blitF = genStr(font, #"Yaw P:-    +"),   blitB = genStr(bg, #"Yaw P:-    +") },
+        { text = "Yaw D:-    +",   x = 2, y = 17, blitF = genStr(font, #"Yaw D:-    +"),   blitB = genStr(bg, #"Yaw D:-    +") },
+        { text = "Speed P:-  +",   x = 2, y = 18, blitF = genStr(font, #"Speed P:-  +"),   blitB = genStr(bg, #"Speed P:-  +") },
     }
 end
 
 function set_fixedWing:refresh()
     self:refreshButtons()
     self:refreshTitle()
-    self.window.setCursorPos(7, 3)
-    self.window.write(math.floor(properties.wing.wings.pos.x + 0.5))
-    self.window.setCursorPos(9, 4)
-    self.window.write(string.format("%0.2f", properties.wing.wings.size))
-    self.window.setCursorPos(7, 5)
-    self.window.write(math.floor(properties.wing.tail_wings.pos.x + 0.5))
-    self.window.setCursorPos(9, 6)
-    self.window.write(string.format("%0.2f", properties.wing.tail_wings.size))
-    self.window.setCursorPos(11, 7)
-    self.window.write(math.floor(properties.wing.verticalTail.pos.x + 0.5))
-    self.window.setCursorPos(9, 8)
-    self.window.write(string.format("%0.2f", properties.wing.verticalTail.size))
+    
+    -- 检查 properties.wing 是否存在
+    if properties.wing then
+        self.window.setCursorPos(7, 3)
+        self.window.write(math.floor((properties.wing.wings and properties.wing.wings.pos and properties.wing.wings.pos.x or 0) + 0.5))
+        self.window.setCursorPos(9, 4)
+        self.window.write(string.format("%0.2f", (properties.wing.wings and properties.wing.wings.size or 0)))
+        self.window.setCursorPos(7, 5)
+        self.window.write(math.floor((properties.wing.tail_wings and properties.wing.tail_wings.pos and properties.wing.tail_wings.pos.x or 0) + 0.5))
+        self.window.setCursorPos(9, 6)
+        self.window.write(string.format("%0.2f", (properties.wing.tail_wings and properties.wing.tail_wings.size or 0)))
+        self.window.setCursorPos(11, 7)
+        self.window.write(math.floor((properties.wing.verticalTail and properties.wing.verticalTail.pos and properties.wing.verticalTail.pos.x or 0) + 0.5))
+        self.window.setCursorPos(9, 8)
+        self.window.write(string.format("%0.2f", (properties.wing.verticalTail and properties.wing.verticalTail.size or 0)))
+    end
+    
+    -- 显示控制参数
+    local profile = properties.profile and properties.profile[properties.profileIndex] or {}
+    self.window.setCursorPos(10, 12)
+    self.window.write(string.format("%0.2f", profile.fixedWing_roll_P or 1.0))
+    self.window.setCursorPos(10, 13)
+    self.window.write(string.format("%0.2f", profile.fixedWing_roll_D or 2.0))
+    self.window.setCursorPos(10, 14)
+    self.window.write(string.format("%0.2f", profile.fixedWing_pitch_P or 1.0))
+    self.window.setCursorPos(10, 15)
+    self.window.write(string.format("%0.2f", profile.fixedWing_pitch_D or 2.0))
+    self.window.setCursorPos(10, 16)
+    self.window.write(string.format("%0.2f", profile.fixedWing_yaw_P or 1.0))
+    self.window.setCursorPos(10, 17)
+    self.window.write(string.format("%0.2f", profile.fixedWing_yaw_D or 2.0))
+    self.window.setCursorPos(10, 18)
+    self.window.write(string.format("%0.2f", profile.fixedWing_speed_P or 2.0))
 end
 
 function set_fixedWing:onTouch(x, y)
     self:subPage_Back(x, y)
-    if y == 3 or y == 5 or y == 7 then
-        local result = 0
-        if y < 7 then
-            if x == 6 then
-                result = -1
-            elseif x == 10 then
-                result = 1
+    if properties.wing then
+        if y == 3 or y == 5 or y == 7 then
+            local result = 0
+            if y < 7 then
+                if x == 6 then
+                    result = -1
+                elseif x == 10 then
+                    result = 1
+                end
+            else
+                if x == 10 then
+                    result = -1
+                elseif x == 14 then
+                    result = 1
+                end
             end
-        else
-            if x == 10 then
-                result = -1
-            elseif x == 14 then
-                result = 1
-            end
-        end
 
-        if y == 3 then
-            properties.wing.wings.pos.x = properties.wing.wings.pos.x + result
-        elseif y == 5 then
-            properties.wing.tail_wings.pos.x = properties.wing.tail_wings.pos.x + result
-        elseif y == 7 then
-            properties.wing.verticalTail.pos.x = properties.wing.verticalTail.pos.x + result
+            if y == 3 and properties.wing.wings and properties.wing.wings.pos then
+                properties.wing.wings.pos.x = properties.wing.wings.pos.x + result
+                system:updatePersistentData()
+            elseif y == 5 and properties.wing.tail_wings and properties.wing.tail_wings.pos then
+                properties.wing.tail_wings.pos.x = properties.wing.tail_wings.pos.x + result
+                system:updatePersistentData()
+            elseif y == 7 and properties.wing.verticalTail and properties.wing.verticalTail.pos then
+                properties.wing.verticalTail.pos.x = properties.wing.verticalTail.pos.x + result
+                system:updatePersistentData()
+            end
+        elseif y == 4 or y == 6 or y == 8 then
+            local result = 0
+            if x == 7 then
+                result = -0.1
+            elseif x == 8 then
+                result = -0.01
+            elseif x == 13 then
+                result = 0.01
+            elseif x == 14 then
+                result = 0.1
+            end
+            if y == 4 and properties.wing.wings then
+                properties.wing.wings.size = properties.wing.wings.size + result
+                properties.wing.wings.size = properties.wing.wings.size < 0.01 and 0.01 or properties.wing.wings.size
+                system:updatePersistentData()
+            elseif y == 6 and properties.wing.tail_wings then
+                properties.wing.tail_wings.size = properties.wing.tail_wings.size + result
+                properties.wing.tail_wings.size = properties.wing.tail_wings.size < 0.01 and 0.01 or
+                    properties.wing.tail_wings.size
+                system:updatePersistentData()
+            elseif y == 8 and properties.wing.verticalTail then
+                properties.wing.verticalTail.size = properties.wing.verticalTail.size + result
+                properties.wing.verticalTail.size = properties.wing.verticalTail.size < 0.01 and 0.01 or
+                    properties.wing.verticalTail.size
+                system:updatePersistentData()
+            end
         end
-    elseif y == 4 or y == 6 or y == 8 then
+    end
+    
+    if y >= 12 and y <= 18 then
+        -- 控制参数调整
         local result = 0
-        if x == 7 then
+        if x == 9 then
             result = -0.1
-        elseif x == 8 then
-            result = -0.01
-        elseif x == 13 then
-            result = 0.01
         elseif x == 14 then
             result = 0.1
         end
-        if y == 4 then
-            properties.wing.wings.size = properties.wing.wings.size + result
-            properties.wing.wings.size = properties.wing.wings.size < 0.01 and 0.01 or properties.wing.wings.size
-        elseif y == 6 then
-            properties.wing.tail_wings.size = properties.wing.tail_wings.size + result
-            properties.wing.tail_wings.size = properties.wing.tail_wings.size < 0.01 and 0.01 or
-                properties.wing.tail_wings.size
-        elseif y == 8 then
-            properties.wing.verticalTail.size = properties.wing.verticalTail.size + result
-            properties.wing.verticalTail.size = properties.wing.verticalTail.size < 0.01 and 0.01 or
-                properties.wing.verticalTail.size
+        
+        if properties.profile and properties.profile[properties.profileIndex] then
+            local profile = properties.profile[properties.profileIndex]
+            if y == 12 then
+                profile.fixedWing_roll_P = (profile.fixedWing_roll_P or 1.0) + result
+                profile.fixedWing_roll_P = math.max(0, profile.fixedWing_roll_P)
+                system:updatePersistentData()
+            elseif y == 13 then
+                profile.fixedWing_roll_D = (profile.fixedWing_roll_D or 2.0) + result
+                profile.fixedWing_roll_D = math.max(0, profile.fixedWing_roll_D)
+                system:updatePersistentData()
+            elseif y == 14 then
+                profile.fixedWing_pitch_P = (profile.fixedWing_pitch_P or 1.0) + result
+                profile.fixedWing_pitch_P = math.max(0, profile.fixedWing_pitch_P)
+                system:updatePersistentData()
+            elseif y == 15 then
+                profile.fixedWing_pitch_D = (profile.fixedWing_pitch_D or 2.0) + result
+                profile.fixedWing_pitch_D = math.max(0, profile.fixedWing_pitch_D)
+                system:updatePersistentData()
+            elseif y == 16 then
+                profile.fixedWing_yaw_P = (profile.fixedWing_yaw_P or 1.0) + result
+                profile.fixedWing_yaw_P = math.max(0, profile.fixedWing_yaw_P)
+                system:updatePersistentData()
+            elseif y == 17 then
+                profile.fixedWing_yaw_D = (profile.fixedWing_yaw_D or 2.0) + result
+                profile.fixedWing_yaw_D = math.max(0, profile.fixedWing_yaw_D)
+                system:updatePersistentData()
+            elseif y == 18 then
+                profile.fixedWing_speed_P = (profile.fixedWing_speed_P or 2.0) + result
+                profile.fixedWing_speed_P = math.max(0, profile.fixedWing_speed_P)
+                system:updatePersistentData()
+            end
         end
     end
 end
