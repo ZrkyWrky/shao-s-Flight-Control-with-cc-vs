@@ -2616,13 +2616,22 @@ function absHoloGram:draw_msg_bar()
 end
 
 function absHoloGram:draw_number(pos, n, white)
-    if type(n) ~= "number" then
+    if type(n) ~= "number" or n ~= n or n == math.huge or n == -math.huge then
+        return
+    end
+    if type(pos) ~= "table" or type(pos.x) ~= "number" or type(pos.y) ~= "number" then
+        return
+    end
+    if pos.x ~= pos.x or pos.y ~= pos.y or pos.x == math.huge or pos.x == -math.huge or pos.y == math.huge or pos.y == -math.huge then
         return
     end
     n = math.floor(n + 0.5)
     local str = tostring(math.abs(n))
     local x = pos.x - 2 * #str
     local y = pos.y - 2
+    if x ~= x or y ~= y or x == math.huge or x == -math.huge or y == math.huge or y == -math.huge then
+        return
+    end
     if white then
         if n < 0 then
             self.screen.DrawLine(x, y + 2, x + 4, y + 2, 0xFFFFFFFF, 1)
