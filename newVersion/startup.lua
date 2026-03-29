@@ -2665,8 +2665,17 @@ function absHoloGram:draw_number(pos, n, white)
 end
 
 function absHoloGram:draw_7x7_fonts(pos, uni_arr)
+    if type(pos) ~= "table" or type(pos.x) ~= "number" or type(pos.y) ~= "number" then
+        return
+    end
+    if pos.x ~= pos.x or pos.y ~= pos.y or pos.x == math.huge or pos.x == -math.huge or pos.y == math.huge or pos.y == -math.huge then
+        return
+    end
     local arrs = split(uni_arr, ",")
     local x, y = pos.x - #arrs / 2 * 8, pos.y
+    if x ~= x or y ~= y or x == math.huge or x == -math.huge or y == math.huge or y == -math.huge then
+        return
+    end
     for i, v in ipairs(arrs) do
         if v ~= "_space" then
             self.screen.Blit(x, y, 7, 7, jizhi_7x7_fonts[v], 1)
@@ -2676,6 +2685,12 @@ function absHoloGram:draw_7x7_fonts(pos, uni_arr)
 end
 
 function absHoloGram:draw_5x5_letter(pos, str, color, left)
+    if type(pos) ~= "table" or type(pos.x) ~= "number" or type(pos.y) ~= "number" then
+        return
+    end
+    if pos.x ~= pos.x or pos.y ~= pos.y or pos.x == math.huge or pos.x == -math.huge or pos.y == math.huge or pos.y == -math.huge then
+        return
+    end
     local arrs
     if str == "_cross" or str == "_cross_box" then
         arrs = {str}
@@ -2688,6 +2703,9 @@ function absHoloGram:draw_5x5_letter(pos, str, color, left)
         x = pos.x
     else
         x = pos.x - #arrs / 2 * 6
+    end
+    if x ~= x or y ~= y or x == math.huge or x == -math.huge or y == math.huge or y == -math.huge then
+        return
     end
     for i, v in ipairs(arrs) do
         if v ~= " " then
