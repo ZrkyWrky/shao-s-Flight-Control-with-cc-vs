@@ -365,6 +365,9 @@ system = {
 function system:init()
     properties = system.datFromFile(self.files.propFileName)
     hologram_prop = system.datFromFile(self.files.holograms)
+    if type(properties.userName) ~= "string" or properties.userName == "" then
+        properties.userName = system.resetProp().userName
+    end
     local faceVec = engine_controller.getFaceRaw()
     if faceVec.x == 1 then
         properties.shipFace = "east"
@@ -745,6 +748,17 @@ local getUserByUUID = function(uuid)
     end
 end
 
+local resolveUserName = function(uuid)
+    local userName = getUserByUUID(uuid)
+    if type(userName) == "string" and userName ~= "" then
+        return userName
+    end
+    if type(properties.userName) == "string" and properties.userName ~= "" then
+        return properties.userName
+    end
+    return system.resetProp().userName
+end
+
 function controllers:run()
     while true do
         local flag = true
@@ -755,7 +769,7 @@ function controllers:run()
                     v:rot()
                     if self.activated ~= v then
                         self.activated = v
-                        properties.userName = getUserByUUID(v.joy.getUserUUID())
+                        properties.userName = resolveUserName(v.joy.getUserUUID())
                         system:updatePersistentData()
                     end
                     flag = false
@@ -2599,7 +2613,7 @@ function absHoloGram:draw_msg_bar()
     self:draw_5x5_letter(self.speedFontPos, "km/h")
 
     self:draw_5x5_letter(self.energyFontPos, "need rpm")
-    self:draw_number(self.energyPos, flight_control.mass / 20000)
+    self:draw_number(self.energyPos, math.ceil(engine_controller.getRequiredRPM()))
     if properties.mode == 1 then
         self:draw_5x5_letter(self.ThrottlePos, "throttle")
         self:draw_number(self.ThrottleFontPos, properties.spaceShipThrottle, true)
@@ -5632,8 +5646,9 @@ function loadingScreen:refresh()
         self.monitor.setCursorPos(offset_x + 5, offset_y + 3)
         self.monitor.blit("WELCOME", "0000000", "fffffff")
 
-        self.monitor.setCursorPos(offset_x + 9 - #properties.userName / 2, offset_y + 5)
-        self.monitor.write(properties.userName)
+        local displayUserName = type(properties.userName) == "string" and properties.userName ~= "" and properties.userName or system.resetProp().userName
+        self.monitor.setCursorPos(offset_x + 9 - #displayUserName / 2, offset_y + 5)
+        self.monitor.write(displayUserName)
 
         self.monitor.setCursorPos(offset_x + 9 - #self.name / 2 - 1, offset_y + 9)
         self.monitor.write("[" .. self.name .. "]")
