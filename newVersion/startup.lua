@@ -637,6 +637,7 @@ local applyRotDependentTorque = function (x, y, z)
 end
 
 local absController = { hasUser = false }
+local controller_poll_interval = 0.01
 
 function absController:refresh()
     self.hasUser = false
@@ -645,7 +646,10 @@ function absController:refresh()
             return
         end
         if self.joy.hasUser() then
-            self.joy.setFullPrecision(true)
+            if not self.fullPrecisionEnabled then
+                self.joy.setFullPrecision(true)
+                self.fullPrecisionEnabled = true
+            end
             self.hasUser = true
             self.LeftStick.x = -self.joy.getAxis(1)
             self.LeftStick.y = -self.joy.getAxis(2)
@@ -667,6 +671,9 @@ function absController:refresh()
             self.right = self.joy.getButton(13)
             self.LeftJoyClick = self.joy.getButton(10)
             self.RightJoyClick = self.joy.getButton(11)
+        elseif self.fullPrecisionEnabled then
+            self.joy.setFullPrecision(false)
+            self.fullPrecisionEnabled = false
         end
 
         self.LB = self.LB and 1 or 0
@@ -675,7 +682,6 @@ function absController:refresh()
         self.BTStick.y = self.LT - self.RT
 
     else
-        self.joy.setFullPrecision(false)
         self:defaultOutput()
     end
 end
@@ -781,7 +787,7 @@ function controllers:run()
         if flag then
             self.activated = defController
         end
-        sleep(0.05)
+        sleep(controller_poll_interval)
     end
 end
 
