@@ -6179,7 +6179,9 @@ local run_hologram = function ()
                 hologram_manager:getAllHoloGram()
                 need_init = false
             end
-            engine_controller.setIdle(isScaledShip(getCurrentShipScale()))
+            if not isScaledShip(getCurrentShipScale()) then
+                engine_controller.setIdle(false)
+            end
             hologram_manager:refresh()
             sleep(0.05)
         end
