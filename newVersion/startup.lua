@@ -874,6 +874,22 @@ local getWorldOffsetOfPcPos = function(v)
     return wPos:sub(offset)
 end
 
+local scaled_ship_threshold = 0.999
+
+local getCurrentShipScale = function()
+    if ship and ship.getScale then
+        local scale = ship.getScale()
+        if scale and scale.x then
+            return scale.x
+        end
+    end
+    return 1
+end
+
+local isScaledShip = function(scale)
+    return (scale or 1) < scaled_ship_threshold
+end
+
 function flight_control:send_to_childShips()
     local followPoint = flight_control.lastFollowPoint
     if #self.followPath > 0 then
@@ -966,6 +982,9 @@ function flight_control:pd_mov_control(vec, p, d)
 end
 
 function flight_control:pd_wolrd_space_control(vec, p, d)
+    if isScaledShip(self.scale) then
+        return
+    end
     applyInvariantForce(vec:scale(p):sub(newVec(self.velocity):scale(d)):add(newVec(0, 10, 0)):scale(self.mass):unpack())
 end
 
@@ -6160,7 +6179,7 @@ local run_hologram = function ()
                 hologram_manager:getAllHoloGram()
                 need_init = false
             end
-            engine_controller.setIdle(false)
+            engine_controller.setIdle(isScaledShip(getCurrentShipScale()))
             hologram_manager:refresh()
             sleep(0.05)
         end
